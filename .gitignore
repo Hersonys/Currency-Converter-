@@ -1,218 +1,364 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+import tkinter as tk
+from tkinter import ttk, messagebox
+import requests
+import json
+import os
+from datetime import datetime
 
-# C extensions
-*.so
+# Файл для хранения истории
+HISTORY_FILE = "conversion_history.json"
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Бесплатный API (exchangerate-api.com)
+# РЕГИСТРАЦИЯ: https://app.exchangerate-api.com/sign-up
+API_KEY = "ВАШ_API_КЛЮЧ"  # ЗАМЕНИТЕ НА СВОЙ!
+API_URL = f"https://v6.exchangerate-api.com/v6/{API_KEY}/latest/"
 
-# PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+class CurrencyConverter:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("💱 Currency Converter — Конвертер валют")
+        self.root.geometry("800x600")
+        self.root.resizable(True, True)
+        
+        # Курсы валют
+        self.exchange_rates = {}
+        self.currencies = []
+        
+        # История конвертаций
+        self.history = []
+        
+        # Загрузка истории
+        self.load_history()
+        
+        # Создание интерфейса
+        self.create_widgets()
+        
+        # Загрузка курсов валют
+        self.load_currencies()
+    
+    def create_widgets(self):
+        # ========== ВЕРХНЯЯ РАМКА (КОНВЕРТЕР) ==========
+        converter_frame = ttk.LabelFrame(self.root, text="💱 Конвертер валют", padding=15)
+        converter_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Сумма
+        ttk.Label(converter_frame, text="Сумма:", font=("Arial", 11, "bold")).grid(row=0, column=0, padx=5, pady=10, sticky="w")
+        self.amount_entry = ttk.Entry(converter_frame, width=15, font=("Arial", 11))
+        self.amount_entry.grid(row=0, column=1, padx=5, pady=10)
+        self.amount_entry.bind("<Return>", lambda e: self.convert())
+        
+        # Валюта "Из"
+        ttk.Label(converter_frame, text="Из валюты:", font=("Arial", 11, "bold")).grid(row=0, column=2, padx=5, pady=10, sticky="w")
+        self.from_currency = ttk.Combobox(converter_frame, width=10, font=("Arial", 11), state="readonly")
+        self.from_currency.grid(row=0, column=3, padx=5, pady=10)
+        
+        # Стрелочка
+        ttk.Label(converter_frame, text="➡️", font=("Arial", 14)).grid(row=0, column=4, padx=10)
+        
+        # Валюта "В"
+        ttk.Label(converter_frame, text="В валюту:", font=("Arial", 11, "bold")).grid(row=0, column=5, padx=5, pady=10, sticky="w")
+        self.to_currency = ttk.Combobox(converter_frame, width=10, font=("Arial", 11), state="readonly")
+        self.to_currency.grid(row=0, column=6, padx=5, pady=10)
+        
+        # Кнопки
+        btn_frame = ttk.Frame(converter_frame)
+        btn_frame.grid(row=0, column=7, padx=20)
+        
+        self.convert_btn = ttk.Button(btn_frame, text="🔄 Конвертировать", command=self.convert, width=15)
+        self.convert_btn.pack(pady=2)
+        
+        self.swap_btn = ttk.Button(btn_frame, text="⇄ Поменять местами", command=self.swap_currencies, width=15)
+        self.swap_btn.pack(pady=2)
+        
+        # Результат
+        result_frame = ttk.Frame(converter_frame)
+        result_frame.grid(row=1, column=0, columnspan=8, pady=10, sticky="ew")
+        
+        self.result_label = tk.Label(result_frame, text="💡 Введите сумму и нажмите 'Конвертировать'", 
+                                     font=("Arial", 12, "bold"), fg="#2c3e50", bg="#ecf0f1", 
+                                     relief=tk.GROOVE, padx=10, pady=10)
+        self.result_label.pack(fill="x")
+        
+        # ========== СРЕДНЯЯ РАМКА (КУРСЫ) ==========
+        rates_frame = ttk.LabelFrame(self.root, text="📊 Актуальные курсы (к USD)", padding=10)
+        rates_frame.pack(fill="x", padx=10, pady=5)
+        
+        self.rates_text = tk.Text(rates_frame, height=6, font=("Courier", 9), wrap=tk.WORD)
+        self.rates_text.pack(fill="both", expand=True)
+        
+        scrollbar_rates = ttk.Scrollbar(rates_frame, command=self.rates_text.yview)
+        self.rates_text.configure(yscrollcommand=scrollbar_rates.set)
+        scrollbar_rates.pack(side="right", fill="y")
+        
+        # ========== НИЖНЯЯ РАМКА (ИСТОРИЯ) ==========
+        history_frame = ttk.LabelFrame(self.root, text="📜 История конвертаций", padding=10)
+        history_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Таблица истории
+        columns = ("Дата", "Сумма", "Из", "В", "Результат", "Курс")
+        self.history_tree = ttk.Treeview(history_frame, columns=columns, show="headings", height=8)
+        
+        for col in columns:
+            self.history_tree.heading(col, text=col)
+            if col == "Дата":
+                self.history_tree.column(col, width=130)
+            elif col == "Сумма" or col == "Результат" or col == "Курс":
+                self.history_tree.column(col, width=100)
+            else:
+                self.history_tree.column(col, width=80)
+        
+        # Скроллбар для истории
+        scrollbar_history = ttk.Scrollbar(history_frame, orient="vertical", command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar_history.set)
+        
+        self.history_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_history.pack(side="right", fill="y")
+        
+        # Кнопки управления историей
+        history_btn_frame = ttk.Frame(history_frame)
+        history_btn_frame.pack(side="bottom", fill="x", pady=5)
+        
+        ttk.Button(history_btn_frame, text="🗑️ Очистить историю", command=self.clear_history).pack(side="left", padx=5)
+        ttk.Button(history_btn_frame, text="💾 Экспорт истории", command=self.export_history).pack(side="left", padx=5)
+        ttk.Button(history_btn_frame, text="📋 Копировать последний результат", command=self.copy_last_result).pack(side="left", padx=5)
+        
+        # Статусбар
+        self.status_var = tk.StringVar()
+        self.status_var.set("✅ Готово | Выберите валюты")
+        statusbar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        statusbar.pack(fill="x", side="bottom")
+    
+    def load_currencies(self):
+        """Загрузка списка валют и курсов из API"""
+        try:
+            self.status_var.set("🔄 Загрузка курсов валют...")
+            self.root.update()
+            
+            # Начинаем с USD (базовая валюта)
+            response = requests.get(API_URL + "USD", timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("result") == "success":
+                    self.exchange_rates = data.get("conversion_rates", {})
+                    self.currencies = sorted(self.exchange_rates.keys())
+                    
+                    # Заполнение комбобоксов
+                    self.from_currency['values'] = self.currencies
+                    self.to_currency['values'] = self.currencies
+                    
+                    # Значения по умолчанию
+                    self.from_currency.set("USD")
+                    self.to_currency.set("EUR")
+                    
+                    # Показ курсов
+                    self.show_rates()
+                    
+                    self.status_var.set(f"✅ Курсы загружены | {len(self.currencies)} валют | {data.get('time_last_update_utc', '')}")
+                    messagebox.showinfo("Успех", f"✅ Загружено {len(self.currencies)} валют!\n\nДанные обновлены: {data.get('time_last_update_utc', '')}")
+                else:
+                    self.status_var.set("❌ Ошибка API: " + data.get("error-type", "Неизвестная ошибка"))
+                    messagebox.showerror("Ошибка API", f"API вернул ошибку:\n{data.get('error-type', 'Неизвестно')}\n\nПроверьте API-ключ!")
+            else:
+                self.status_var.set(f"❌ Ошибка HTTP: {response.status_code}")
+                messagebox.showerror("Ошибка", f"Не удалось подключиться к API\nКод ошибки: {response.status_code}")
+                
+        except requests.exceptions.ConnectionError:
+            self.status_var.set("❌ Ошибка: Нет интернета")
+            messagebox.showerror("Ошибка сети", "Проверьте подключение к интернету!\n\nAPI требует соединения для получения курсов.")
+        except requests.exceptions.Timeout:
+            self.status_var.set("❌ Таймаут подключения")
+            messagebox.showerror("Ошибка", "Сервер не отвечает. Попробуйте позже.")
+        except Exception as e:
+            self.status_var.set(f"❌ Ошибка: {str(e)[:50]}")
+            messagebox.showerror("Ошибка", f"Произошла ошибка:\n{str(e)}")
+    
+    def show_rates(self):
+        """Отображение популярных курсов"""
+        self.rates_text.delete(1.0, tk.END)
+        
+        popular_currencies = ["USD", "EUR", "GBP", "JPY", "CNY", "RUB", "KZT", "UAH", "CAD", "AUD"]
+        
+        rates_text = "💵 КУРСЫ К USD (1 USD = ...)\n" + "="*50 + "\n"
+        
+        for curr in popular_currencies:
+            if curr in self.exchange_rates:
+                rate = self.exchange_rates[curr]
+                if curr == "USD":
+                    rates_text += f"🇺🇸 {curr}: {rate:.4f}\n"
+                elif curr == "EUR":
+                    rates_text += f"🇪🇺 {curr}: {rate:.4f}\n"
+                elif curr == "RUB":
+                    rates_text += f"🇷🇺 {curr}: {rate:.4f}\n"
+                elif curr == "GBP":
+                    rates_text += f"🇬🇧 {curr}: {rate:.4f}\n"
+                elif curr == "JPY":
+                    rates_text += f"🇯🇵 {curr}: {rate:.4f}\n"
+                elif curr == "CNY":
+                    rates_text += f"🇨🇳 {curr}: {rate:.4f}\n"
+                else:
+                    rates_text += f"   {curr}: {rate:.4f}\n"
+        
+        rates_text += "\n" + "="*50 + "\n"
+        rates_text += f"📊 Всего валют: {len(self.currencies)}\n"
+        rates_text += "💡 Курсы обновляются автоматически при запуске"
+        
+        self.rates_text.insert(1.0, rates_text)
+    
+    def convert(self):
+        """Конвертация валюты"""
+        # Проверка ввода суммы
+        amount_str = self.amount_entry.get().strip()
+        
+        if not amount_str:
+            messagebox.showwarning("Внимание", "⚠️ Введите сумму для конвертации!")
+            return
+        
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                messagebox.showwarning("Внимание", "⚠️ Сумма должна быть положительным числом!")
+                return
+        except ValueError:
+            messagebox.showerror("Ошибка", "❌ Введите корректное число!\n(используйте точку, а не запятую)")
+            return
+        
+        # Получение валют
+        from_curr = self.from_currency.get()
+        to_curr = self.to_currency.get()
+        
+        if not from_curr or not to_curr:
+            messagebox.showwarning("Внимание", "⚠️ Выберите валюты для конвертации!")
+            return
+        
+        # Конвертация
+        try:
+            # Сначала конвертируем в USD (базовая валюта нашего API)
+            if from_curr == "USD":
+                usd_amount = amount
+            else:
+                usd_amount = amount / self.exchange_rates[from_curr]
+            
+            # Из USD в целевую валюту
+            if to_curr == "USD":
+                result = usd_amount
+            else:
+                result = usd_amount * self.exchange_rates[to_curr]
+            
+            # Форматирование
+            rate = self.exchange_rates[to_curr] / self.exchange_rates[from_curr] if from_curr != "USD" else self.exchange_rates[to_curr]
+            
+            # Отображение результата
+            result_text = f"💰 {amount:.2f} {from_curr} = {result:.2f} {to_curr}"
+            self.result_label.config(text=result_text, fg="#27ae60")
+            
+            # Добавление в историю
+            history_entry = {
+                "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "amount": amount,
+                "from_currency": from_curr,
+                "to_currency": to_curr,
+                "result": round(result, 2),
+                "rate": round(rate, 4)
+            }
+            self.history.append(history_entry)
+            self.save_history()
+            self.update_history_table()
+            
+            self.status_var.set(f"✅ Конвертация выполнена: {amount:.2f} {from_curr} → {result:.2f} {to_curr}")
+            
+        except KeyError as e:
+            messagebox.showerror("Ошибка", f"❌ Валюта {e} не найдена в курсах!\nПопробуйте перезагрузить программу.")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"❌ Ошибка конвертации:\n{str(e)}")
+    
+    def swap_currencies(self):
+        """Поменять валюты местами"""
+        from_curr = self.from_currency.get()
+        to_curr = self.to_currency.get()
+        
+        self.from_currency.set(to_curr)
+        self.to_currency.set(from_curr)
+        
+        # Если есть сумма, автоматически конвертируем заново
+        if self.amount_entry.get().strip():
+            self.convert()
+        
+        self.status_var.set("🔄 Валюты поменяны местами")
+    
+    def update_history_table(self):
+        """Обновление таблицы истории"""
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        for entry in reversed(self.history[-50:]):  # Показываем последние 50 записей
+            self.history_tree.insert("", tk.END, values=(
+                entry["datetime"],
+                f"{entry['amount']:.2f}",
+                entry["from_currency"],
+                entry["to_currency"],
+                f"{entry['result']:.2f}",
+                f"{entry['rate']:.4f}"
+            ))
+    
+    def clear_history(self):
+        """Очистка истории"""
+        if messagebox.askyesno("Подтверждение", "🗑️ Вы уверены, что хотите очистить всю историю?"):
+            self.history = []
+            self.save_history()
+            self.update_history_table()
+            self.status_var.set("🗑️ История очищена")
+            messagebox.showinfo("Успех", "История успешно очищена!")
+    
+    def export_history(self):
+        """Экспорт истории в JSON"""
+        if not self.history:
+            messagebox.showwarning("Экспорт", "История пуста! Нечего экспортировать.")
+            return
+        
+        export_file = f"history_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        with open(export_file, 'w', encoding='utf-8') as f:
+            json.dump(self.history, f, ensure_ascii=False, indent=4)
+        
+        messagebox.showinfo("Экспорт", f"✅ История экспортирована в файл:\n{os.path.abspath(export_file)}")
+        self.status_var.set(f"💾 История экспортирована в {export_file}")
+    
+    def copy_last_result(self):
+        """Копирование последнего результата в буфер обмена"""
+        if not self.history:
+            messagebox.showwarning("Внимание", "Нет результатов для копирования!")
+            return
+        
+        last = self.history[-1]
+        text = f"{last['amount']:.2f} {last['from_currency']} = {last['result']:.2f} {last['to_currency']}"
+        
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        
+        self.status_var.set(f"📋 Скопировано: {text}")
+        messagebox.showinfo("Скопировано", f"✅ Результат скопирован в буфер обмена:\n{text}")
+    
+    def load_history(self):
+        """Загрузка истории из файла"""
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    self.history = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                self.history = []
+        else:
+            self.history = []
+    
+    def save_history(self):
+        """Сохранение истории в файл"""
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(self.history, f, ensure_ascii=False, indent=4)
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-# Pipfile.lock
-
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-# poetry.lock
-# poetry.toml
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-# pdm.lock
-# pdm.toml
-.pdm-python
-.pdm-build/
-
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-# pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# Redis
-*.rdb
-*.aof
-*.pid
-
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
-
-# ActiveMQ
-activemq-data/
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-# Temporary file for partial code execution
-tempCodeRunnerFile.py
-
-# Ruff stuff:
-.ruff_cache/
-
-# PyPI configuration file
-.pypirc
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = CurrencyConverter(root)
+    root.mainloop()
