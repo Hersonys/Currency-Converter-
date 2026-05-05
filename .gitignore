@@ -1,17 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 import json
 import os
 from datetime import datetime
 
 # Файл для хранения истории
 HISTORY_FILE = "conversion_history.json"
-
-# Бесплатный API (exchangerate-api.com)
-# РЕГИСТРАЦИЯ: https://app.exchangerate-api.com/sign-up
-API_KEY = "ВАШ_API_КЛЮЧ"  # ЗАМЕНИТЕ НА СВОЙ!
-API_URL = f"https://v6.exchangerate-api.com/v6/{API_KEY}/latest/"
 
 
 class CurrencyConverter:
@@ -21,9 +15,25 @@ class CurrencyConverter:
         self.root.geometry("800x600")
         self.root.resizable(True, True)
         
-        # Курсы валют
-        self.exchange_rates = {}
-        self.currencies = []
+        # Демо-курсы валют (можно изменить)
+        self.exchange_rates = {
+            "USD": 1.0,
+            "EUR": 0.92,
+            "RUB": 88.50,
+            "GBP": 0.79,
+            "JPY": 148.20,
+            "CNY": 7.19,
+            "KZT": 449.50,
+            "UAH": 41.20,
+            "CAD": 1.36,
+            "AUD": 1.51,
+            "CHF": 0.89,
+            "TRY": 32.15,
+            "INR": 83.40,
+            "BRL": 5.05,
+            "KRW": 1345.00
+        }
+        self.currencies = sorted(self.exchange_rates.keys())
         
         # История конвертаций
         self.history = []
@@ -34,8 +44,9 @@ class CurrencyConverter:
         # Создание интерфейса
         self.create_widgets()
         
-        # Загрузка курсов валют
-        self.load_currencies()
+        # Показ курсов
+        self.show_rates()
+        self.status_var.set("✅ Демо-режим | Курсы примерные")
     
     def create_widgets(self):
         # ========== ВЕРХНЯЯ РАМКА (КОНВЕРТЕР) ==========
@@ -51,7 +62,9 @@ class CurrencyConverter:
         # Валюта "Из"
         ttk.Label(converter_frame, text="Из валюты:", font=("Arial", 11, "bold")).grid(row=0, column=2, padx=5, pady=10, sticky="w")
         self.from_currency = ttk.Combobox(converter_frame, width=10, font=("Arial", 11), state="readonly")
+        self.from_currency['values'] = self.currencies
         self.from_currency.grid(row=0, column=3, padx=5, pady=10)
+        self.from_currency.set("USD")
         
         # Стрелочка
         ttk.Label(converter_frame, text="➡️", font=("Arial", 14)).grid(row=0, column=4, padx=10)
@@ -59,7 +72,9 @@ class CurrencyConverter:
         # Валюта "В"
         ttk.Label(converter_frame, text="В валюту:", font=("Arial", 11, "bold")).grid(row=0, column=5, padx=5, pady=10, sticky="w")
         self.to_currency = ttk.Combobox(converter_frame, width=10, font=("Arial", 11), state="readonly")
+        self.to_currency['values'] = self.currencies
         self.to_currency.grid(row=0, column=6, padx=5, pady=10)
+        self.to_currency.set("EUR")
         
         # Кнопки
         btn_frame = ttk.Frame(converter_frame)
@@ -81,10 +96,10 @@ class CurrencyConverter:
         self.result_label.pack(fill="x")
         
         # ========== СРЕДНЯЯ РАМКА (КУРСЫ) ==========
-        rates_frame = ttk.LabelFrame(self.root, text="📊 Актуальные курсы (к USD)", padding=10)
+        rates_frame = ttk.LabelFrame(self.root, text="📊 Курсы валют", padding=10)
         rates_frame.pack(fill="x", padx=10, pady=5)
         
-        self.rates_text = tk.Text(rates_frame, height=6, font=("Courier", 9), wrap=tk.WORD)
+        self.rates_text = tk.Text(rates_frame, height=8, font=("Courier", 9), wrap=tk.WORD)
         self.rates_text.pack(fill="both", expand=True)
         
         scrollbar_rates = ttk.Scrollbar(rates_frame, command=self.rates_text.yview)
@@ -125,85 +140,31 @@ class CurrencyConverter:
         
         # Статусбар
         self.status_var = tk.StringVar()
-        self.status_var.set("✅ Готово | Выберите валюты")
+        self.status_var.set("✅ Демо-режим | Выберите валюты")
         statusbar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         statusbar.pack(fill="x", side="bottom")
     
-    def load_currencies(self):
-        """Загрузка списка валют и курсов из API"""
-        try:
-            self.status_var.set("🔄 Загрузка курсов валют...")
-            self.root.update()
-            
-            # Начинаем с USD (базовая валюта)
-            response = requests.get(API_URL + "USD", timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                if data.get("result") == "success":
-                    self.exchange_rates = data.get("conversion_rates", {})
-                    self.currencies = sorted(self.exchange_rates.keys())
-                    
-                    # Заполнение комбобоксов
-                    self.from_currency['values'] = self.currencies
-                    self.to_currency['values'] = self.currencies
-                    
-                    # Значения по умолчанию
-                    self.from_currency.set("USD")
-                    self.to_currency.set("EUR")
-                    
-                    # Показ курсов
-                    self.show_rates()
-                    
-                    self.status_var.set(f"✅ Курсы загружены | {len(self.currencies)} валют | {data.get('time_last_update_utc', '')}")
-                    messagebox.showinfo("Успех", f"✅ Загружено {len(self.currencies)} валют!\n\nДанные обновлены: {data.get('time_last_update_utc', '')}")
-                else:
-                    self.status_var.set("❌ Ошибка API: " + data.get("error-type", "Неизвестная ошибка"))
-                    messagebox.showerror("Ошибка API", f"API вернул ошибку:\n{data.get('error-type', 'Неизвестно')}\n\nПроверьте API-ключ!")
-            else:
-                self.status_var.set(f"❌ Ошибка HTTP: {response.status_code}")
-                messagebox.showerror("Ошибка", f"Не удалось подключиться к API\nКод ошибки: {response.status_code}")
-                
-        except requests.exceptions.ConnectionError:
-            self.status_var.set("❌ Ошибка: Нет интернета")
-            messagebox.showerror("Ошибка сети", "Проверьте подключение к интернету!\n\nAPI требует соединения для получения курсов.")
-        except requests.exceptions.Timeout:
-            self.status_var.set("❌ Таймаут подключения")
-            messagebox.showerror("Ошибка", "Сервер не отвечает. Попробуйте позже.")
-        except Exception as e:
-            self.status_var.set(f"❌ Ошибка: {str(e)[:50]}")
-            messagebox.showerror("Ошибка", f"Произошла ошибка:\n{str(e)}")
-    
     def show_rates(self):
-        """Отображение популярных курсов"""
+        """Отображение курсов валют"""
         self.rates_text.delete(1.0, tk.END)
         
-        popular_currencies = ["USD", "EUR", "GBP", "JPY", "CNY", "RUB", "KZT", "UAH", "CAD", "AUD"]
+        rates_text = "💵 КУРСЫ ВАЛЮТ (к USD)\n" + "="*50 + "\n\n"
         
-        rates_text = "💵 КУРСЫ К USD (1 USD = ...)\n" + "="*50 + "\n"
+        # Группируем валюты для красивого отображения
+        popular = [("🇺🇸 USD", "USD"), ("🇪🇺 EUR", "EUR"), ("🇷🇺 RUB", "RUB"), 
+                   ("🇬🇧 GBP", "GBP"), ("🇯🇵 JPY", "JPY"), ("🇨🇳 CNY", "CNY"),
+                   ("🇰🇿 KZT", "KZT"), ("🇺🇦 UAH", "UAH"), ("🇨🇦 CAD", "CAD"),
+                   ("🇦🇺 AUD", "AUD"), ("🇨🇭 CHF", "CHF"), ("🇹🇷 TRY", "TRY"),
+                   ("🇮🇳 INR", "INR"), ("🇧🇷 BRL", "BRL"), ("🇰🇷 KRW", "KRW")]
         
-        for curr in popular_currencies:
-            if curr in self.exchange_rates:
-                rate = self.exchange_rates[curr]
-                if curr == "USD":
-                    rates_text += f"🇺🇸 {curr}: {rate:.4f}\n"
-                elif curr == "EUR":
-                    rates_text += f"🇪🇺 {curr}: {rate:.4f}\n"
-                elif curr == "RUB":
-                    rates_text += f"🇷🇺 {curr}: {rate:.4f}\n"
-                elif curr == "GBP":
-                    rates_text += f"🇬🇧 {curr}: {rate:.4f}\n"
-                elif curr == "JPY":
-                    rates_text += f"🇯🇵 {curr}: {rate:.4f}\n"
-                elif curr == "CNY":
-                    rates_text += f"🇨🇳 {curr}: {rate:.4f}\n"
-                else:
-                    rates_text += f"   {curr}: {rate:.4f}\n"
+        for name, code in popular:
+            if code in self.exchange_rates:
+                rates_text += f"{name}: {self.exchange_rates[code]:.4f}\n"
         
         rates_text += "\n" + "="*50 + "\n"
         rates_text += f"📊 Всего валют: {len(self.currencies)}\n"
-        rates_text += "💡 Курсы обновляются автоматически при запуске"
+        rates_text += "💡 Демо-режим (курсы примерные)\n"
+        rates_text += "🔧 Для реальных курсов нужен API-ключ"
         
         self.rates_text.insert(1.0, rates_text)
     
@@ -235,7 +196,7 @@ class CurrencyConverter:
         
         # Конвертация
         try:
-            # Сначала конвертируем в USD (базовая валюта нашего API)
+            # Сначала конвертируем в USD
             if from_curr == "USD":
                 usd_amount = amount
             else:
@@ -247,8 +208,11 @@ class CurrencyConverter:
             else:
                 result = usd_amount * self.exchange_rates[to_curr]
             
-            # Форматирование
-            rate = self.exchange_rates[to_curr] / self.exchange_rates[from_curr] if from_curr != "USD" else self.exchange_rates[to_curr]
+            # Курс для отображения
+            if from_curr == "USD":
+                rate = self.exchange_rates[to_curr]
+            else:
+                rate = self.exchange_rates[to_curr] / self.exchange_rates[from_curr]
             
             # Отображение результата
             result_text = f"💰 {amount:.2f} {from_curr} = {result:.2f} {to_curr}"
@@ -270,7 +234,7 @@ class CurrencyConverter:
             self.status_var.set(f"✅ Конвертация выполнена: {amount:.2f} {from_curr} → {result:.2f} {to_curr}")
             
         except KeyError as e:
-            messagebox.showerror("Ошибка", f"❌ Валюта {e} не найдена в курсах!\nПопробуйте перезагрузить программу.")
+            messagebox.showerror("Ошибка", f"❌ Валюта {e} не найдена!")
         except Exception as e:
             messagebox.showerror("Ошибка", f"❌ Ошибка конвертации:\n{str(e)}")
     
